@@ -3,6 +3,8 @@ import { parseInterval } from './interval.js'
 
 export const DEFAULTS = Object.freeze({ modelCreate: false, continueWhileBusy: false, interval: null })
 export const DENY = 'the model cannot create goals in this session, only the user can with /goal'
+// Output and progress events are frequent and never change whether work is live.
+const MEMBERSHIP_EVENTS = new Set(['registered', 'settled', 'removed'])
 
 /** Policy only. The stable entry retains every hook, waiter, timer and record. */
 export function createRuntime(ctx, bridge) {
@@ -56,6 +58,9 @@ export function createRuntime(ctx, bridge) {
       source: { kind: 'goal-check-in', form: 'notice', summary: boundContextSummary(`Goal check-in · ${interval}`) },
     }))
   }
+  function jobEvent(event) {
+    if (MEMBERSHIP_EVENTS.has(event.type)) bridge.refresh()
+  }
   function preExecute(exec, next) {
     if (exec.name === 'create_goal' && settings(exec.agent.id).modelCreate !== true) return { kind: 'deny', reason: DENY }
     return next()
@@ -98,5 +103,5 @@ export function createRuntime(ctx, bridge) {
     const present = new Set((await ctx.sessionQuery.listSessions()).map(record => record.header.id))
     for (const [id] of bridge.records.entries()) if (!present.has(id)) await bridge.records.delete(id)
   }
-  return { initialize, preExecute, hold, timer, deliver, get, set, cleanup }
+  return { initialize, preExecute, hold, timer, deliver, jobEvent, get, set, cleanup }
 }
