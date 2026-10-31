@@ -1,0 +1,139 @@
+import { createUserMessage, boundContextSummary } from '@deepseek-ai/dsh-llm'
+import { parseInterval } from './interval.js'
+
+export const DEFAULTS = Object.freeze({ modelCreate: false, continueWhileBusy: false, interval: null })
+export const DENY = 'the model cannot create goals in this session, only the user can with /goal'
+// Output and progress events are frequent and never change whether work is live.
+const MEMBERSHIP_EVENTS = new Set(['registered', 'settled', 'removed'])
+
+/** Replace checkpoint hooks without disturbing stable waiters, timers or records. */
+export function createRuntime(ctx, bridge) {
+  for (const dispose of bridge.policyHooks ?? []) dispose()
+  const windows = new Map()
+  const settings = id => bridge.records.get(id) ?? DEFAULTS
+  const armed = agent => {
+    if (ctx.agents.get(agent.id) !== agent) return false
+    const goal = ctx.goals.get(agent)
+    return goal?.phase === 'active' && goal.activation === 'armed'
+  }
+  function descendants(rootId) {
+    const childrenOf = new Map()
+    for (const agent of ctx.agents.list()) {
+      const { parentSession, origin } = agent.session.header
+      if (parentSession === undefined || origin !== 'subagent') continue
+      const siblings = childrenOf.get(parentSession) ?? []
+      siblings.push(agent)
+      childrenOf.set(parentSession, siblings)
+    }
+    const result = [], pending = [rootId], visited = new Set()
+    while (pending.length) {
+      const parentId = pending.shift()
+      if (visited.has(parentId)) continue
+      visited.add(parentId)
+      for (const child of childrenOf.get(parentId) ?? []) {
+        result.push(child)
+        pending.push(child.id)
+      }
+    }
+    return result
+  }
+  function busy(agent) {
+    const children = descendants(agent.id)
+    const jobs = [agent, ...children].reduce((count, owner) => count + ctx.jobs.list(owner.id)
+      .filter(job => job.owner === owner.id && (job.status === 'running' || job.status === 'stopping')).length, 0)
+    return { jobs, subagents: children.filter(child => child.status === 'running').length }
+  }
+  function hold(reference) {
+    const agent = reference.flushFor
+    // Real agents reach this method from the original turn-stopping hook.
+    if (!agent || bridge.closing || settings(agent.id).continueWhileBusy || !armed(agent)) return null
+    const goal = ctx.goals.get(agent)
+    if (goal.roundsStarted >= goal.maxGoalRounds) return null
+    const waiting = busy(agent)
+    // Keep the driver's checkpoint parked throughout intervening native turns.
+    return agent.status === 'idle' && !waiting.jobs && !waiting.subagents ? null : waiting
+  }
+  function openWindow(agent) {
+    clearImmediate(windows.get(agent))
+    windows.set(agent, setImmediate(() => windows.delete(agent)))
+  }
+  function checkpoint(session) {
+    const agent = ctx.agents.get(session.id)
+    if (!agent || agent.session.header.origin === 'subagent' || !windows.has(agent) || bridge.waiters.has(agent.id) || agent.status !== 'idle') return
+    const reference = { id: agent.id, flushFor: agent }
+    const waiting = hold(reference)
+    if (waiting === null) return
+    return new Promise(resolve => {
+      bridge.waiters.set(agent.id, {
+        agent: reference, waiting,
+        resolve() {
+          if (hold(reference) !== null) return
+          bridge.waiters.delete(agent.id)
+          resolve()
+        },
+      })
+    })
+  }
+  bridge.policyHooks = [
+    ctx.on('agent/status', ({ agent, status }) => { if (status === 'idle') openWindow(agent) }, { prepend: true }),
+    ctx.on('goal/changed', ({ agent }) => { if (agent.status === 'idle') openWindow(agent) }, { prepend: true }),
+    ctx.on('session/flush', checkpoint),
+    () => { for (const handle of windows.values()) clearImmediate(handle); windows.clear() },
+  ]
+  function timer(agent) {
+    const interval = settings(agent.id).interval
+    return !bridge.closing && interval !== null && armed(agent) ? parseInterval(interval) : null
+  }
+  function deliver(agent, interval) {
+    agent.steer(createUserMessage({
+      content: [{ type: 'text', text: `scheduled goal check-in (every ${interval}). Check on running jobs and subagents, then continue the goal.` }],
+      source: { kind: 'goal-check-in', form: 'notice', summary: boundContextSummary(`Goal check-in · ${interval}`) },
+    }))
+  }
+  function jobEvent(event) {
+    if (MEMBERSHIP_EVENTS.has(event.type)) bridge.refresh()
+  }
+  function preExecute(exec, next) {
+    if (exec.name === 'create_goal' && settings(exec.agent.id).modelCreate !== true) return { kind: 'deny', reason: DENY }
+    return next()
+  }
+  async function initialize(agent, fresh = false) {
+    const header = agent.session.header
+    if (fresh && header.origin !== 'subagent' && header.id.startsWith('session-sidechat-') && header.parentSession && !bridge.records.get(header.id)) {
+      await bridge.mutate(() => bridge.records.get(header.id) ? undefined : bridge.records.put(header.id, { ...settings(header.parentSession) }))
+    }
+    bridge.refresh(agent.id)
+  }
+  async function sessionIdFor(payload) {
+    if (typeof payload?.sessionId !== 'string' || !payload.sessionId) throw new Error('sessionId is required')
+    const sessionId = payload.sessionId
+    if (!ctx.agents.get(sessionId)) {
+      const view = await ctx.sessionQuery.observeSession(sessionId)
+      view[Symbol.dispose]()
+    }
+    return sessionId
+  }
+  function value(sessionId) {
+    return { sessionId, ...settings(sessionId), waiting: bridge.waiters.get(sessionId)?.waiting ?? null }
+  }
+  async function get(payload) { return value(await sessionIdFor(payload)) }
+  async function set(payload) {
+    const sessionId = await sessionIdFor(payload)
+    const patch = {}
+    for (const field of ['modelCreate', 'continueWhileBusy']) {
+      if (!(field in payload)) continue
+      if (typeof payload[field] !== 'boolean') throw new Error(`${field} must be a boolean`)
+      patch[field] = payload[field]
+    }
+    if ('interval' in payload) patch.interval = payload.interval === null ? null : parseInterval(payload.interval).interval
+    await bridge.mutate(() => bridge.records.put(sessionId, { ...settings(sessionId), ...patch }))
+    bridge.refresh(sessionId)
+    return value(sessionId)
+  }
+  async function cleanup() {
+    if (![...bridge.records.entries()].length) return
+    const present = new Set((await ctx.sessionQuery.listSessions()).map(record => record.header.id))
+    for (const [id] of bridge.records.entries()) if (!present.has(id)) await bridge.records.delete(id)
+  }
+  return { initialize, preExecute, hold, timer, deliver, jobEvent, get, set, cleanup }
+}
