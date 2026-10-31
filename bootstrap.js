@@ -9,6 +9,7 @@ const spec = defineDomain({
   tables: { sessions: domainTable(z.object({ modelCreate: z.boolean(), continueWhileBusy: z.boolean(), interval: z.string().nullable() })) },
 })
 const MAX_TIMEOUT = 2 ** 31 - 1
+const MEMBERSHIP_EVENTS = new Set(['registered', 'settled', 'removed'])
 
 /** Stable wait and timer ownership, independent of the current policy revision. */
 export function createBridge(ctx, records) {
@@ -139,7 +140,8 @@ export async function apply(ctx) {
   ctx.on('agent/disposed', ({ agent }) => bridge.disposed(agent))
   ctx.on('goal/changed', ({ agent }) => bridge.refresh(agent.id))
   ctx.on('goal/activation-changed', ({ sessionId }) => bridge.refresh(sessionId))
-  ctx.jobs.events.subscribe({ owners: 'all' }, () => bridge.refresh())
+  // Output and progress events are frequent and never change whether work is live.
+  ctx.jobs.events.subscribe({ owners: 'all' }, event => { if (MEMBERSHIP_EVENTS.has(event.type)) bridge.refresh() })
   ctx.on('agent/created', ({ agent, source }) => operation(() => bridge.current.initialize(agent, source === 'startup')))
   ctx.on('api-session/removed', id => {
     if (!bridge.closing) void operation(() => bridge.records.delete(id)).catch(error => ctx.logger.warn(`Goal Mode preference removal: ${error.message}`))
