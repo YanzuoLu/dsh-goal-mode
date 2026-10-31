@@ -1,0 +1,3 @@
+- insert:
+    - id: goal-mode
+      name: ./bootstrap.js

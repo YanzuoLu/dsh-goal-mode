@@ -1,0 +1,25 @@
+{
+  "name": "dsh-goal-mode",
+  "version": "0.1.0",
+  "description": "Per-session goal creation, background-work holds and scheduled check-ins for DeepSeek Harness",
+  "type": "module",
+  "main": "bootstrap.js",
+  "exports": { ".": "./bootstrap.js", "./client": "./lib/client.js", "./package.json": "./package.json" },
+  "files": ["bootstrap.js", "release.json", "dist", "lib/client.js", "cordis.patch.yml"],
+  "scripts": { "build": "node scripts/build.mjs" },
+  "license": "MIT",
+  "author": "Yanzuo Lu",
+  "repository": { "type": "git", "url": "https://github.com/YanzuoLu/dsh-goal-mode.git" },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-permission-presets"]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-storage-domain": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "zod": "^4.0.0"
+  }
+}
