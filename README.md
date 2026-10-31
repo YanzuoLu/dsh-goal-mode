@@ -2,7 +2,7 @@
 
 Per-session goal controls for DeepSeek Harness 0.2.0-rc.2. The composer’s **Goal** menu appears after MCP (or after permission when MCP is absent).
 
-- **Model can create goals** defaults off. Model `create_goal` calls are denied, while the user’s `/goal` command stays native and unaffected.
+- **Model can create goals** defaults on. Turned off, model `create_goal` calls are denied, while the user’s `/goal` command stays native and unaffected.
 - **Continue while background work runs** defaults off. Active, armed goals wait at the native driver's idle checkpoint while descendant subagents or owned jobs are busy. Turns end normally. User messages, relays, job notices and check-ins run in their own native turns, while the checkpoint wait survives until work is done and the agent is idle. Goal state is never modified.
 - **Check-in interval** defaults off. Choose a preset or an ordered combination of days, hours and minutes, from `1m` through `30d`. `90m` normalizes to `1h30m`. Native notice messages steer the session while its goal is active and armed.
 
