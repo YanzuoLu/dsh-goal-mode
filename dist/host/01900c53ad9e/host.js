@@ -1,7 +1,7 @@
 import { createUserMessage, boundContextSummary } from '@deepseek-ai/dsh-llm'
 import { parseInterval } from './interval.js'
 
-export const DEFAULTS = Object.freeze({ modelCreate: true, continueWhileBusy: false, interval: null })
+export const DEFAULTS = Object.freeze({ modelCreate: false, continueWhileBusy: false, interval: null })
 export const DENY = 'the model cannot create goals in this session, only the user can with /goal'
 // Output and progress events are frequent and never change whether work is live.
 const MEMBERSHIP_EVENTS = new Set(['registered', 'settled', 'removed'])
