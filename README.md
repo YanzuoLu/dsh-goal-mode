@@ -1,6 +1,6 @@
 # DSH Goal Mode
 
-Per-session goal controls for DeepSeek Harness 0.2.0-rc.2. The composer’s **Goal** menu appears after MCP (or after permission when MCP is absent).
+Per-session goal controls for DeepSeek Harness 0.2.0-rc.2. The composer’s **Goal** menu appears after MCP (or after permission when MCP is absent). It shares the native composer's compact-display variables with the other controls, showing the Goal icon instead of text and a chevron when the row is compact. The waiting indicator and accessible label remain available.
 
 - **Model can create goals** defaults off. Turned off, model `create_goal` calls are denied, while the user’s `/goal` command stays native and unaffected.
 - **Continue while background work runs** defaults off. Active, armed goals wait at the native driver's idle checkpoint while descendant subagents or owned jobs are busy. Turns end normally. User messages, relays, job notices and check-ins run in their own native turns, while the checkpoint wait survives until work is done and the agent is idle. Goal state is never modified.
